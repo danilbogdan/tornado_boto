@@ -3,9 +3,9 @@ import botocore.session
 from tornado import gen
 from tornado.httpclient import HTTPError
 from tornado_botocore import Botocore
-from boto.dynamodb2.types import Dynamizer
 from boto.dynamodb2.items import Item
 from boto.dynamodb2.table import Table
+from .utils import Dynamizer
 
 
 class DynamoDB(object):
@@ -23,12 +23,13 @@ class DynamoDB(object):
         self.request_timeout = request_timeout
         self.endpoint_url = endpoint_url
         self.session = session or botocore.session.get_session()
+        self.dynamizer = Dynamizer()
         if not self.session.get_credentials():
             self.session.set_credentials(access_key, secret_key)
 
     @gen.coroutine
     def get(self, table_name, key):
-        encoded_key = self._encode_item(key)
+        encoded_key = self.dynamizer.encode_item(key)
         dynamodb_get_item = self._create_dynamodb_task('GetItem')
         encoded_item = yield self._run_dynamodb_task(
             dynamodb_get_item.call,
@@ -36,11 +37,11 @@ class DynamoDB(object):
             Key=encoded_key,
             ConsistentRead=False
         )
-        raise gen.Return(self._decode_item(encoded_item))
+        raise gen.Return(self.dynamizer.decode_item(encoded_item))
 
     @gen.coroutine
     def put(self, table_name, item, overwrite=False):
-        encoded_item = self._encode_item(item)
+        encoded_item = self.dynamizer.encode_item(item)
         dynamodb_put_item = self._create_dynamodb_task('PutItem')
         kwargs = dict(
                     TableName=table_name,
@@ -56,7 +57,7 @@ class DynamoDB(object):
 
     @gen.coroutine
     def delete(self, table_name, item):
-        encoded_item = self._encode_item(item)
+        encoded_item = self.dynamizer.encode_item(item)
         dynamodb_delete_item = self._create_dynamodb_task('DeleteItem')
         yield self._run_dynamodb_task(
             dynamodb_delete_item.call,
@@ -96,22 +97,6 @@ class DynamoDB(object):
             yield self._create_table(**kwargs)
             result = yield gen.Task(task, **kwargs)
         raise gen.Return(result.get('Item'))
-
-
-    def _encode_item(self, item):
-        item_cp = item.copy()
-        for key, val in item_cp.iteritems():
-            item_cp.update({key: Dynamizer().encode(val)})
-        return item_cp
-
-
-    def _decode_item(self, encoded_item):
-        encoded_item_cp = encoded_item.copy()
-        # only 1-depth supported.
-        # TODO: provide n-depth of dict
-        for key, val in encoded_item_cp.iteritems():
-            encoded_item_cp.update({key: Dynamizer().decode(val)})
-        return encoded_item_cp
 
     def _get_expected(self, item):
         return Item(Table(''), item).build_expects()
